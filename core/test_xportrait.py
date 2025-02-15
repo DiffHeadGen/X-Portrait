@@ -3,6 +3,7 @@
 # difications”). All Bytedance Inc.'s Modifications are Copyright (2023) B-
 # ytedance Inc..  
 # *************************************************************************
+from functools import cached_property
 import os
 import argparse
 import numpy as np
@@ -377,73 +378,13 @@ def visualize_mm(args, name, batch_data, infer_model, nSample, local_image_dir, 
     output_img = img_as_ubyte(output_img)
     imageio.mimsave(output_path, output_img[:,:,:512], fps=batch_data['fps'], quality=10, pixelformat='yuv420p', codec='libx264')
 
-def main(args):
-    
-    # ******************************
-    # initialize training
-    # ******************************
-    args.world_size = 1
-    args.local_rank = 0
-    args.rank = 0
-    args.device = torch.device("cuda", args.local_rank)
-
-    # set seed for reproducibility
-    set_seed(args.seed)
-
-    # ******************************
-    # create model
-    # ******************************
-    model = create_model(args.model_config).cpu()
-    model.sd_locked = args.sd_locked
-    model.only_mid_control = args.only_mid_control
-    model.to(args.local_rank)
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
-    if args.local_rank == 0:
-        print('Total base  parameters {:.02f}M'.format(count_param([model])))
-    if args.ema_rate is not None and args.ema_rate > 0 and args.rank == 0:
-        print(f"Creating EMA model at ema_rate={args.ema_rate}")
-        model_ema = EMA(model, beta=args.ema_rate, update_after_step=0, update_every=1)
-    else:
-        model_ema = None
-
-    # ******************************
-    # load pre-trained models
-    # ******************************
-    if args.resume_dir is not None:
-        if args.local_rank == 0:
-            load_state_dict(model, args.resume_dir, strict=False)
-    else:
-        print('please privide the correct resume_dir!')
-        exit()
-    
-    # ******************************
-    # create DDP model
-    # ******************************
-    if args.compile and TORCH_VERSION == "2":
-        model = torch.compile(model)
-    
-    torch.cuda.set_device(args.local_rank)
-    print_peak_memory("Max memory allocated after creating DDP", args.local_rank)
-    infer_model = model.module if hasattr(model, "module") else model
-
-    with torch.no_grad():
-        driving_videos = glob.glob(args.driving_video)
-        for driving_video in driving_videos:
-            print ('working on {}'.format(os.path.basename(driving_video)))
-            infer_batch_data = x_portrait_data_prep(args.source_image, driving_video, args.device, args.best_frame, start_idx = args.start_idx, num_frames = args.out_frames, skip=args.skip, output_local=True)
-            infer_batch_data['video_name'] = os.path.basename(driving_video)
-            infer_batch_data['source_name'] = args.source_image
-            nSample = infer_batch_data['sources'].shape[0]
-            visualize_mm(args, "inference", infer_batch_data, infer_model, nSample=nSample, local_image_dir=args.output_dir, num_mix=args.num_mix)
 
 
-if __name__ == "__main__":
-
+def get_args():
     str2bool = lambda arg: bool(int(arg))
     parser = argparse.ArgumentParser(description='Control Net training')
     ## Model
-    parser.add_argument('--model_config', type=str, default="model_lib/ControlNet/models/cldm_v15_video_appearance.yaml",
+    parser.add_argument('--model_config', type=str, default="config/cldm_v15_appearance_pose_local_mm.yaml",
                         help="The path of model config file")
     parser.add_argument('--reinit_hint_block', action='store_true', default=False,
                         help="Re-initialize hint blocks for channel mis-match")
@@ -480,9 +421,9 @@ if __name__ == "__main__":
                         help='cfg')
     parser.add_argument("--num_drivings", type = int, default = 16,
                         help="Number of driving images in a single sequence of video.")
-    parser.add_argument("--output_dir", type=str, default=None, required=True,
+    parser.add_argument("--output_dir", type=str, default=None,
                         help="The output directory where the model predictions and checkpoints will be written.")
-    parser.add_argument("--resume_dir", type=str, default=None,
+    parser.add_argument("--resume_dir", type=str, default="checkpoint/model_state-415001.th",
                         help="The resume directory where the model checkpoints will be loaded.")
     parser.add_argument("--source_image", type=str, default="",
                         help="The source image for neural motion.")                  
@@ -501,6 +442,94 @@ if __name__ == "__main__":
     parser.add_argument('--out_frames', type=int, default=0,
                         help='num frames')  
     args = parser.parse_args()
-
-    main(args)
+    return args
     
+def get_model(args):
+    # ******************************
+    # initialize training
+    # ******************************
+    args.world_size = 1
+    args.local_rank = 0
+    args.rank = 0
+    args.device = torch.device("cuda", args.local_rank)
+
+    # set seed for reproducibility
+    set_seed(args.seed)
+
+    # ******************************
+    # create model
+    # ******************************
+    model = create_model(args.model_config).cpu()
+    model.sd_locked = args.sd_locked
+    model.only_mid_control = args.only_mid_control
+    model.to(args.local_rank)
+    if args.output_dir:
+        os.makedirs(args.output_dir, exist_ok=True)
+    if args.local_rank == 0:
+        print('Total base  parameters {:.02f}M'.format(count_param([model])))
+    if args.ema_rate is not None and args.ema_rate > 0 and args.rank == 0:
+        print(f"Creating EMA model at ema_rate={args.ema_rate}")
+        model_ema = EMA(model, beta=args.ema_rate, update_after_step=0, update_every=1)
+    else:
+        model_ema = None
+
+    # ******************************
+    # load pre-trained models
+    # ******************************
+    if args.resume_dir is not None:
+        if args.local_rank == 0:
+            load_state_dict(model, args.resume_dir, strict=False)
+    else:
+        print('please privide the correct resume_dir!')
+        exit()
+    
+    # ******************************
+    # create DDP model
+    # ******************************
+    if args.compile and TORCH_VERSION == "2":
+        model = torch.compile(model)
+    
+    torch.cuda.set_device(args.local_rank)
+    print_peak_memory("Max memory allocated after creating DDP", args.local_rank)
+    infer_model = model.module if hasattr(model, "module") else model
+    return infer_model
+
+def main():
+    args = get_args()
+    infer_model = get_model(args)
+    with torch.no_grad():
+        driving_videos = glob.glob(args.driving_video)
+        for driving_video in driving_videos:
+            print ('working on {}'.format(os.path.basename(driving_video)))
+            infer_batch_data = x_portrait_data_prep(args.source_image, driving_video, args.device, args.best_frame, start_idx = args.start_idx, num_frames = args.out_frames, skip=args.skip, output_local=True)
+            infer_batch_data['video_name'] = os.path.basename(driving_video)
+            infer_batch_data['source_name'] = args.source_image
+            nSample = infer_batch_data['sources'].shape[0]
+            visualize_mm(args, "inference", infer_batch_data, infer_model, nSample=nSample, local_image_dir=args.output_dir, num_mix=args.num_mix)
+
+class XPortraitRunner:
+    @cached_property
+    def args(self):
+        args = get_args()
+        args.uc_scale = 5
+        args.ddim_steps = 30
+        args.num_mix = 4
+        return args
+    
+    @cached_property
+    def infer_model(self):
+        return get_model(self.args)
+    
+    @torch.no_grad()
+    def run(self, source_img_path, driving_video_path, output_dir):
+        args = self.args
+        
+        infer_model = self.infer_model
+        driving_videos = glob.glob(driving_video_path)
+        for driving_video in driving_videos:
+            print ('working on {}'.format(os.path.basename(driving_video)))
+            infer_batch_data = x_portrait_data_prep(source_img_path, driving_video, args.device, args.best_frame, start_idx = args.start_idx, num_frames = args.out_frames, skip=args.skip, output_local=True)
+            infer_batch_data['video_name'] = os.path.basename(driving_video)
+            infer_batch_data['source_name'] = source_img_path
+            nSample = infer_batch_data['sources'].shape[0]
+            visualize_mm(args, "inference", infer_batch_data, infer_model, nSample=nSample, local_image_dir=output_dir, num_mix=args.num_mix)

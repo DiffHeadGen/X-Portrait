@@ -1,7 +1,7 @@
 python3 core/test_xportrait.py \
 --model_config config/cldm_v15_appearance_pose_local_mm.yaml \
 --output_dir outputs \
---resume_dir checkpoint/model_state-415001.th \
+# --resume_dir checkpoint/model_state-415001.th \
 --seed 999 \
 --uc_scale 5 \
 --source_image assets/source_image.png \

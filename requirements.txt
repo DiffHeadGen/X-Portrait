@@ -36,6 +36,7 @@ webdataset>=0.2.33
 wheel>=0.41.0
 xformers>=0.0.22
 streamlit-keyup==0.2.0
+huggingface_hub==0.25.1
 
 # Basic
 scikit-image==0.19.3
