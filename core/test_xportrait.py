@@ -377,7 +377,7 @@ def visualize_mm(args, name, batch_data, infer_model, nSample, local_image_dir, 
     output_img = output_img.data.cpu().numpy()
     output_img = img_as_ubyte(output_img)
     imageio.mimsave(output_path, output_img[:,:,:512], fps=batch_data['fps'], quality=10, pixelformat='yuv420p', codec='libx264')
-
+    return output_path
 
 
 def get_args():
@@ -525,11 +525,11 @@ class XPortraitRunner:
         args = self.args
         
         infer_model = self.infer_model
-        driving_videos = glob.glob(driving_video_path)
-        for driving_video in driving_videos:
+        for driving_video in [driving_video_path]:
             print ('working on {}'.format(os.path.basename(driving_video)))
             infer_batch_data = x_portrait_data_prep(source_img_path, driving_video, args.device, args.best_frame, start_idx = args.start_idx, num_frames = args.out_frames, skip=args.skip, output_local=True)
             infer_batch_data['video_name'] = os.path.basename(driving_video)
             infer_batch_data['source_name'] = source_img_path
             nSample = infer_batch_data['sources'].shape[0]
-            visualize_mm(args, "inference", infer_batch_data, infer_model, nSample=nSample, local_image_dir=output_dir, num_mix=args.num_mix)
+            output_video_path = visualize_mm(args, "inference", infer_batch_data, infer_model, nSample=nSample, local_image_dir=output_dir, num_mix=args.num_mix)
+            return output_video_path
