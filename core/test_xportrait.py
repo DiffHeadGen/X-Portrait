@@ -508,12 +508,18 @@ def main():
             visualize_mm(args, "inference", infer_batch_data, infer_model, nSample=nSample, local_image_dir=args.output_dir, num_mix=args.num_mix)
 
 class XPortraitRunner:
+    def __init__(self, disable_fp16=False):
+        self.disable_fp16 = disable_fp16
+    
     @cached_property
     def args(self):
         args = get_args()
         args.uc_scale = 5
         args.ddim_steps = 30
         args.num_mix = 4
+        # 根据disable_fp16参数设置use_fp16
+        if self.disable_fp16:
+            args.use_fp16 = False
         return args
     
     @cached_property
